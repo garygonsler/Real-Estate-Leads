@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: real_estate_ai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Flask API
+  api:
+    build: .
+    command: gunicorn -w 4 -b 0.0.0.0:5000 app.main:app
+    ports:
+      - "5000:5000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/real_estate_ai
+      REDIS_URL: redis://redis:6379/0
+      FLASK_ENV: ${FLASK_ENV:-development}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      MLS_API_KEY: ${MLS_API_KEY}
+      MLS_API_SECRET: ${MLS_API_SECRET}
+      CRM_API_KEY: ${CRM_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./config:/app/config
+
+  # Celery Worker
+  worker:
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/real_estate_ai
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      MLS_API_KEY: ${MLS_API_KEY}
+      MLS_API_SECRET: ${MLS_API_SECRET}
+      CRM_API_KEY: ${CRM_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./config:/app/config
+
+  # Celery Beat (Scheduler)
+  beat:
+    build: .
+    command: celery -A app.celery_app beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/real_estate_ai
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./config:/app/config
+
+volumes:
+  postgres_data:
